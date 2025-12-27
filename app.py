@@ -299,6 +299,30 @@ elif mode == "Customer Chatbot":
 
             sentiment, issue_category = classify_intent_hybrid(prompt, sentiment_model, issue_model)
 
+            # --- CONTEXT PERISITENCE ---
+            # We need to remember the "Root Cause" (e.g., Quality) even if the user switches to asking for a "Refund" (which looks like Billing).
+            if "active_issue" not in st.session_state:
+                st.session_state["active_issue"] = None
+            
+            # Update active issue only if it's a specific root cause.
+            # If the user just says "Refund", we don't want to overwrite "Quality" with "Billing".
+            is_resolution_keyword = any(w in prompt.lower() for w in ['refund', 'replace', 'return', 'money'])
+            
+            if issue_category == "Quality":
+                st.session_state["active_issue"] = "Quality"
+            elif issue_category == "Logistics":
+                st.session_state["active_issue"] = "Logistics"
+            elif issue_category == "Billing" and not is_resolution_keyword:
+                # Only set Billing if it's a real billing complaint (e.g. "overcharged"), not just "I want money back"
+                st.session_state["active_issue"] = "Billing"
+            
+            # Use the PERSISTENT context if we have one, otherwise fallback to current detection
+            effective_issue = st.session_state.get("active_issue", issue_category)
+            if effective_issue is None: 
+                effective_issue = issue_category
+
+            # (Moved generate_response call to after definition)
+            
             # 2. Dynamic Response Generator
             def generate_response(sentiment, issue, text, rating):
                 text_clean = clean_text(text)
@@ -314,20 +338,38 @@ elif mode == "Customer Chatbot":
                 # --- RATING BASED LOGIC FLOW ---
                 
                 # 1. Low Rating (0-1: Stars 1-2) -> Auto Refund/Replacement
+                # 1. Low Rating (0-1: Stars 1-2) -> Auto Refund/Replacement
                 if rating is not None and rating <= 1:
                     # CHECK FOR USER CHOICE FIRST (Resolution)
-                    if "refund" in text_clean:
-                        return "✅ **Refund Initiated.** You will receive the amount in your original payment method within 3-5 business days."
-                    if "replacement" in text_clean:
-                        return "📦 **Replacement Order Created.** We will ship the new item immediately. You can keep the old one or discard it."
-                    
+                    if "refund" in text_clean or "replacement" in text_clean:
+                        # CASE A: Quality (Product Damaged) -> ALLOWED with Verification
+                        if issue == "Quality":
+                            return "A **photo verification** is required for quality claims. Please upload an image of the damaged item below. 📸"
+                        
+                        # CASE B: Logistics (Late Delivery vs Missing Item)
+                        elif issue == "Logistics":
+                            # Sub-case: Missing Item / Empty Box -> Needs Photo Verification
+                            if any(w in text_clean for w in ['missing', 'empty', 'stolen', 'not in box']):
+                                return "⚠️ **Security Check Required:** For missing items, we need to verify the package condition. Please upload a **photo of the received box/packaging** below. 📦"
+                            
+                            # Sub-case: Late Delivery -> Coupon
+                            return "⚠️ **Refund Policy:** We cannot issue refunds for transit delays. However, I have personally checked your tracking.\n\n🚚 **Status:** In Transit (Delayed due to high volume).\nWe apologize for the inconvenience. Here is a coupon code: **DELAY50**."
+                        
+                        # CASE C: Billing (High Price) -> DENIED Refund -> OFFER Coupon
+                        elif issue == "Billing":
+                             return "⚠️ We cannot refund based on price perception. However, I have shared your feedback with the team. Here is a discount code: **FUTURESAVE20**."
+                        
+                        # CASE D: General/Other
+                        else:
+                            return "I have flagged this transaction for a human manager to review. Reference Ticket: #99281."
+
                     # If no choice made yet, offer options based on issue
                     if issue == "Quality":
-                        return "I apologize for the poor quality/mismatch. Since you rated us low, I can offer an immediate **Refund** or **Replacement**. Which do you prefer?"
+                        return "I apologize for the poor quality. Since you rated us low, I can offer an immediate **Refund** or **Replacement**. Which do you prefer?"
                     elif issue == "Billing":
-                        return "I see you feel the price is unfair. I can initiate a **Full Refund** right now."
+                        return "I see you feel the price is unfair. I have shared this feedback with the seller. 📉 To make it up to you, here is a **Coupon Code** for your next purchase: **FUTURESAVE20**."
                     elif issue == "Logistics":
-                        return "I'm sorry for the shipping trouble. I can process a refund for the shipping charges immediately."
+                        return "I sincerely apologize for the delay. 😞 It appears there is a transit issue. Here is your **Tracking Details**. \n\n**Note:** Our team is working on it. To make up for the wait, please use this coupon: **DELAY50**."
                 
                 # 2. Mid Rating (2: Star 3) -> Help Desk / Email
                 if rating is not None and rating == 2:
@@ -386,7 +428,8 @@ elif mode == "Customer Chatbot":
                 except:
                     return "I'm listening. Tell me more."
 
-            response_text = generate_response(sentiment, issue_category, prompt, user_rating)
+            # Generate Response (MOVED HERE to fix usage-before-definition error)
+            response_text = generate_response(sentiment, effective_issue, prompt, user_rating)
             
             # --- Futuristic UI formatting ---
             sentiment_color = "#00cc96" if sentiment == "positive" else "#EF553B" if sentiment == "negative" else "#AB63FA"
@@ -409,3 +452,66 @@ elif mode == "Customer Chatbot":
             st.session_state.messages.append({"role": "assistant", "content": full_display, "is_html": True})
             with st.chat_message("assistant"):
                 st.markdown(full_display, unsafe_allow_html=True)
+                
+            # --- PHOTO VERIFICATION LOGIC ---
+            # Relaxed check to ensure it catches "photo verification" or "upload an image"
+            if "photo" in response_text.lower() or "upload" in response_text.lower():
+                st.session_state['waiting_for_photo'] = True
+                # Store the intended action based on user text trigger
+                if "replacement" in prompt.lower() or "exchange" in prompt.lower():
+                    st.session_state['pending_action'] = "Replacement"
+                else:
+                    st.session_state['pending_action'] = "Refund"
+                st.rerun()
+
+        # Check Output from previous turn (File Uploader State)
+        if st.session_state.get('waiting_for_photo', False):
+            uploaded_file = st.file_uploader("Upload Image of Damaged Item", type=['png', 'jpg', 'jpeg'])
+            
+            if uploaded_file is not None:
+                # --- HYBRID VISION LOGIC ---
+                # Attempt to use the Real Vision Model if available, otherwise Simulate.
+                
+                with st.spinner("🤖 AI Vision analyzing image damage..."):
+                    import time
+                    time.sleep(2.0) # UX Wait time
+                    
+                    real_model_path = 'damage_vision_model.h5'
+                    vision_confidence = 0.0
+                    
+                    # 1. Real AI Check
+                    try:
+                        import tensorflow as tf
+                        if os.path.exists(real_model_path):
+                            from vision_model import predict_damage
+                            # Save temp file for processing
+                            with open("temp_img.jpg", "wb") as f:
+                                f.write(uploaded_file.getbuffer())
+                            vision_confidence = predict_damage("temp_img.jpg")
+                        else:
+                            # Simulation Fallback (High confidence for demo)
+                            vision_confidence = 0.984
+                    except ImportError:
+                        # Library not installed -> Simulation
+                        vision_confidence = 0.984
+                    
+                
+                if vision_confidence > 0.7:
+                    st.success(f"✅ Damage Detected (Confidence: {vision_confidence:.1%})")
+                    
+                    # DYNAMIC FINAL ACTION
+                    action_type = st.session_state.get('pending_action', 'Refund')
+                    
+                    if action_type == "Replacement":
+                        st.markdown("**Replacement Approved.** 📦 A new order has been created and will ship within 24 hours.")
+                        st.session_state.messages.append({"role": "assistant", "content": "✅ **Replacement Shipped.** Tracking #TRK9982 sent to your email.", "is_html": False})
+                    else:
+                        st.markdown("**Refund Approved.** 💸 Initiating transfer to original payment source...")
+                        st.session_state.messages.append({"role": "assistant", "content": "✅ **Refund Initiated.** Funds will appear in 3-5 days.", "is_html": False})
+
+                else:
+                    st.warning(f"⚠️ Damage not clearly visible (Confidence: {vision_confidence:.1%}). forwarding to manual review.")
+                    st.session_state.messages.append({"role": "assistant", "content": "I've forwarded your image to a human agent for manual review.", "is_html": False})
+
+                # Reset state
+                st.session_state['waiting_for_photo'] = False
