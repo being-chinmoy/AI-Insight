@@ -60,3 +60,25 @@ The system expects `Customer_Sentiment.csv` with columns like:
 -   `platform` (automatically renamed to `purchase_platform`)
 -   `review_text`
 -   `region`, `age_group`, `gender`, etc.
+
+## 🐳 Docker Support (Engineering Mode)
+You can run the entire system in an isolated container.
+
+### 1. Build the Image
+```bash
+docker build -t sentinel-ai .
+```
+
+### 2. Run Web Dashboard
+```bash
+docker run -p 8501:8501 sentinel-ai
+```
+Open [http://localhost:8501](http://localhost:8501) in your browser.
+
+### 3. Run Quantum Core (Terminal App)
+To demonstrate the CLI in an isolated environment:
+```bash
+docker run -it sentinel-ai python manager_chat.py
+```
+*(Use `Ctrl+C` to exit)*
+
