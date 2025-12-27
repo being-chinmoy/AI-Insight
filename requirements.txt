@@ -2,3 +2,8 @@ pandas
 rich
 streamlit
 plotly
+textblob
+numpy
+matplotlib
+scikit-learn
+joblib
