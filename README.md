@@ -1,84 +1,68 @@
-# Customer Sentiment "Manager Chat" System
+# Customer Sentiment AI System
 
 ## Overview
-This is an advanced, terminal-based AI analytics tool designed to help managers explore customer sentiment data. It features a futuristic "Quantum Core" UI powered by `rich` and provides deep insights into customer feedback, rating trends, and operational issues.
+This is a dual-purpose AI platform designed for **Customer Support Automation** and **Managerial Analytics**. It features a modern Streamlit interface and a terminal-based "Quantum Core" for deep data exploration.
 
-## Prerequisites
-- **Python 3.8+**
-- **Libraries**: `pandas`, `rich`
-- **Data**: Ensure `Customer_Sentiment.csv` is present in the project folder.
+## Modes
+
+### 1. 💬 AI Support Assistant (`app.py`)
+A next-generation customer support chatbot that uses **Hybrid Intelligence** (Rules + AI Models) to handle queries with human-like empathy and precision.
+
+#### Key Features:
+-   **🌟 Star Rating System**: The bot adapts its personality based on user feedback.
+    -   **1-2 Stars (Unhappy)**: Auto-enters "Resolution Mode" (Offers Refunds/Replacements).
+    -   **3 Stars (Neutral)**: Enters "Feedback Mode" (Connects to Help Desk).
+    -   **4-5 Stars (Happy)**: Enters "Celebration Mode".
+-   **🧠 Hybrid Logic Engine**:
+    -   **Context Awareness**: Understands that "Delivery" is a *complaint* if rating is low, but a *compliment* if rating is high.
+    -   **Typo Tolerance**: Automatically corrects "replcaement", "colr", etc.
+    -   **Action-Oriented**: Handles "Refund" or "Replacement" requests directly without unnecessary questioning.
+-   **🔄 Session Tools**: Sidebar button to instantly reset the chat for a new customer.
+
+### 2. 📊 Manager Analytics (`manager_chat.py`)
+A terminal-based tool for managers to analyze 10,000+ customer reviews.
+-   **Platform Intelligence**: metrics for Amazon, Flipkart, etc.
+-   **Deep Dive Wizard**: Interactive filtering by Region, Demographics, and Product Category.
+
+---
 
 ## Installation
+
 1.  **Install Dependencies**:
     ```bash
-    pip install pandas rich
+    pip install streamlit pandas rich joblib scikit-learn plotly
     ```
+2.  **Train Models** (Required for Chatbot):
+    ```bash
+    python train_model.py
+    ```
+    *This generates `sentiment_model.pkl` and `issue_model.pkl`.*
+
+---
 
 ## Usage
-Run the main script to launch the Quantum Core interface:
+
+### Run the Web Interface (AI Assistant)
+```bash
+streamlit run app.py
+```
+Select **"Customer Chatbot"** from the sidebar to test the AI.
+
+### Run the Manager Terminal
 ```bash
 python manager_chat.py
 ```
 
-## Command Reference
+---
 
-The system accepts natural language-style commands. Here are the most powerful ones:
+## Technical Details
+-   **Models**: TF-IDF Vectorizer + LinearSVC (Accuracy: ~95%).
+-   **Logic**: Python-based hybrid classifier with regex pattern matching.
+-   **UI**: Streamlit (Web) & Rich (Terminal).
 
-### 1. `platforms` (or `analyze platforms`)
-**[NEW]** Launches the **Platform Intelligence Dashboard**.
--   **Overview**: Summary table of all purchase platforms (Amazon, Flipkart, Myntra, etc.) ranked by performance.
--   **Deep Insights**: For each platform, discover:
-    -   ✅ **Best Product Category**
-    -   ❌ **Worst Product Category**
-    -   ⚠️ **Top Issue Source** (Product with most complaints)
-    -   👥 **High Risk Demographic** (Age/Gender most affected)
-
-### 2. `deep dive`
-Starts an **Interactive Wizard** to filter data by multiple criteria.
--   **Steps**: You will be prompted to select a Region, Platform, Age Group, and Gender.
--   **Hints**: The prompts now list available options (e.g., `Target Region (or 'all', North, South...)`).
--   **Platform Comparison**: If you select "All" platforms, a comparative matrix is displayed.
-
-### 3. `customer <id>`
-Lookup a specific customer profile.
--   **Example**: `customer 12345`
--   Shows their recent transaction, rating, and sentiment analysis of their review.
-
-### 4. `region` / `products` / `demographics`
-Quick summary reports for specific dimensions.
-
-### 5. `help`
-Displays the list of supported commands.
-
-### 6. `exit`
-Terminates the session.
-
-## Data Structure
-The system expects `Customer_Sentiment.csv` with columns like:
--   `customer_id`
--   `customer_rating` (automatically renamed to `rating`)
--   `platform` (automatically renamed to `purchase_platform`)
--   `review_text`
--   `region`, `age_group`, `gender`, etc.
-
-## 🐳 Docker Support (Engineering Mode)
-You can run the entire system in an isolated container.
-
-### 1. Build the Image
+## 🐳 Docker Support
+Build and run the entire suite in a container:
 ```bash
 docker build -t sentinel-ai .
-```
-
-### 2. Run Web Dashboard
-```bash
 docker run -p 8501:8501 sentinel-ai
 ```
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
-### 3. Run Quantum Core (Terminal App)
-To demonstrate the CLI in an isolated environment:
-```bash
-docker run -it sentinel-ai python manager_chat.py
-```
-*(Use `Ctrl+C` to exit)*
-

@@ -179,6 +179,19 @@ if mode == "Manager Analytics":
 # --- MODE 2: CUSTOMER CHATBOT ---
 elif mode == "Customer Chatbot":
     st.title("💬 AI Support Assistant")
+    
+    # --- Feature: Session Reset ---
+    if st.sidebar.button("🔄 New Customer / Reset Chat"):
+        st.session_state.messages = []
+        if "last_rating" in st.session_state:
+            del st.session_state["last_rating"]
+        st.rerun()
+    
+    # --- Feature: Rating System ---
+    st.markdown("### 🌟 Rate your experience to start")
+    user_rating = st.feedback("stars") # Streamlit 1.39+ feature
+    
+    st.markdown("---")
     st.markdown("Describe your issue below, and our AI will assist you instantly.")
     
     # Load Models
@@ -199,12 +212,24 @@ elif mode == "Customer Chatbot":
         # Chat Interface
         if "messages" not in st.session_state:
             st.session_state.messages = []
+            
+        # Initial Proactive Message based on Rating
+        # We check if we already greeted the user for this rating to avoid spamming
+        if user_rating is not None and "last_rating" not in st.session_state:
+            st.session_state["last_rating"] = user_rating
+            greeting = ""
+            if user_rating <= 1: # 0 (1 star) or 1 (2 stars)
+                greeting = "I see you're unhappy (Rating: Low). What seems to be the main problem? (e.g., Bad product, Wrong Color, High Price)"
+            elif user_rating == 2: # 3 Stars
+                greeting = "Thanks for the feedback. How can we improve? You can also ask to connect to our help desk."
+            else: # 4-5 Stars
+                greeting = "We're glad you're happy! What did you like most about the experience?"
+            
+            st.session_state.messages.append({"role": "assistant", "content": greeting, "is_html": False})
 
-        # Display Chat History (Correctly rendering HTML)
+        # Display Chat History
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                # check if message supposedly contains HTML (assistant) or just text (user)
-                # We default to unsafe_allow_html=True for assistant to render the debug badge
                 st.markdown(message["content"], unsafe_allow_html=True)
 
         # User Input
@@ -221,27 +246,50 @@ elif mode == "Customer Chatbot":
             def clean_text(text):
                 text = str(text).lower()
                 text = re.sub(r'[^\w\s]', '', text)
+                
+                # Typo Correction (Basic manual list for common support terms)
+                typos = {
+                    'replcaement': 'replacement',
+                    'replacment': 'replacement',
+                    'refunds': 'refund',
+                    'exchange': 'replacement',
+                    'mismtch': 'mismatch',
+                    'colr': 'color',
+                    'colour': 'color'
+                }
+                for typo, fix in typos.items():
+                    text = text.replace(typo, fix)
+                    
                 return text
 
             # 1. Hybrid Classification
             def classify_intent_hybrid(text, sentiment_model, issue_model):
                 text_clean = clean_text(text)
                 
-                # Rule 0: Gibberish / Very Short Input Check
-                # If input is very short and not a known keyword, default to Neutral/General
-                # This prevents "dsdsv" -> Negative
-                if len(text_clean) < 4 and text_clean not in ['bad', 'sad', 'mad', 'wow']:
-                     return "neutral", "General"
+                # Rule 0: Gibberish Check
+                short_sentiment_words = ['bad', 'sad', 'mad', 'wow', 'hate', 'good', 'love', 'best', 'ok', 'okay', 'poor', 'nice', 'help']
+                if len(text_clean) < 6 and text_clean not in short_sentiment_words:
+                    if text_clean in ['hi', 'hello', 'hey', 'thanks', 'thank', 'thx']:
+                         return "neutral", "General"
+                    return "neutral", "General"
 
-                # Rule-based Overrides
-                if any(w in text_clean for w in ['refund', 'money back', 'charge', 'cost', 'price']):
+                # Rule 1: Positive Keywords
+                if 'fast' in text_clean and 'delivery' in text_clean:
+                     return "positive", "Logistics"
+                if any(w in text_clean for w in ['amazing', 'love', 'great', 'best', 'happy', 'good', 'excellent', 'fast']):
+                     return "positive", "General"
+
+                # Rule 2: Negative Specific Logic
+                if any(w in text_clean for w in ['email', 'contact', 'support', 'human', 'agent', 'help desk']):
+                    return "neutral", "Support"
+                # Context shift: If user asks for "refund" or "replacement" specifically, treat as Resolution (Neutral/Info) rather than Complaint if possible, 
+                # but for Issue Model training "refund" was Billing. We can override this in Response Generation.
+                if any(w in text_clean for w in ['refund', 'money back', 'charge', 'cost', 'price', 'expensive', 'worth']):
                     return "negative", "Billing"
-                if any(w in text_clean for w in ['broken', 'damaged', 'defective', 'stopped working', 'quality', 'bad']):
+                if any(w in text_clean for w in ['broken', 'damaged', 'defective', 'working', 'quality', 'bad', 'mismatch', 'color', 'wrong']):
                     return "negative", "Quality"
-                if any(w in text_clean for w in ['late', 'delivery', 'arrive', 'shipping', 'package']):
+                if any(w in text_clean for w in ['late', 'delivery', 'arrive', 'shipping', 'package', 'missing', 'lost', 'where']):
                     return "negative", "Logistics"
-                if any(w in text_clean for w in ['amazing', 'love', 'great', 'best', 'happy', 'good']):
-                    return "positive", "General"
                 
                 # Fallback to AI Model
                 pred_sentiment = sentiment_model.predict([text_clean])[0]
@@ -252,77 +300,106 @@ elif mode == "Customer Chatbot":
             sentiment, issue_category = classify_intent_hybrid(prompt, sentiment_model, issue_model)
 
             # 2. Dynamic Response Generator
-            def generate_response(sentiment, issue, text):
+            def generate_response(sentiment, issue, text, rating):
                 text_clean = clean_text(text)
                 
-                # Specialized Responses
-                responses = {
-                    "negative": {
-                        "Logistics": [
-                            "I see you're facing a delivery issue. I've prioritized this with our Logistics Team. Do you have your Order ID?",
-                            "I apologize for the delay. Shipping times have been inconsistent lately. Let me check the status for you immediately.",
-                            "That is frustrating. I can track that package for you right now. Please share your Order ID."
-                        ],
-                        "Quality": [
-                            "I am truly sorry to hear the product is defective. We have a 100% replacement policy. would you like a refund or a new unit?",
-                            "That's not the quality we strive for. I've flagged this for a Return Request. You'll receive a confirmation email shortly.",
-                            "Oh no, I apologize. Since the item is damaged, we can ship a replacement immediately. completely free of charge."
-                        ],
-                        "Billing": [
-                            "I understand your concern about the charges. I'm connecting you to our Finance specialist to sort this out.",
-                            " refunds are usually processed within 24 hours. Let me initiate that for you right now.",
-                            "I see the billing discrepancy. I'll open a ticket with Finance to get your money back."
-                        ],
-                        "General": [
-                            "I'm sorry you're having a bad experience. Can you tell me more about what went wrong?",
-                            "I apologize if we let you down. A senior support agent will be with you in moment.",
-                            "Thank you for bringing this to our attention. We take this feedback very seriously."
-                        ]
-                    },
-                    "positive": {
-                        "General": [
-                            "We are thrilled to hear that! 🎉 Here is a special 10% discount code for your next order: HAPPY10",
-                            "That's music to our ears! Thank you for being a loyal customer.",
-                            "Wow, thank you! We'll make sure to pass your kind words to the team."
-                        ]
-                    },
-                    "neutral": {
-                        "General": [
-                            "Thanks for the update. Is there anything else I can help you with today?",
-                            "Understood. Let us know if you have more questions.",
-                            "Okay, I've noted that down. Anything else?",
-                            "I see. How else can I assist you?"
-                        ],
-                        "Logistics": [
-                            "Your order is on the way. You should receive a tracking link via email soon.",
-                            "Standard delivery usually takes 3-5 business days."
-                        ]
-                    }
-                }
+                # Critical Priority: Gratitude check
+                if text_clean.startswith("thank") or "thank you" in text_clean or "thanks" in text_clean:
+                    return "You are very welcome! Let me know if you need anything else."
                 
-                # Context Awareness
+                # Context Awareness: Order ID
                 if re.search(r'\b\d{5,}\b', text):
                      return "Thanks for providing the Order ID. I am pulling up your details now... ⏳"
 
-                # Fetch Random Template
+                # --- RATING BASED LOGIC FLOW ---
+                
+                # 1. Low Rating (0-1: Stars 1-2) -> Auto Refund/Replacement
+                if rating is not None and rating <= 1:
+                    # CHECK FOR USER CHOICE FIRST (Resolution)
+                    if "refund" in text_clean:
+                        return "✅ **Refund Initiated.** You will receive the amount in your original payment method within 3-5 business days."
+                    if "replacement" in text_clean:
+                        return "📦 **Replacement Order Created.** We will ship the new item immediately. You can keep the old one or discard it."
+                    
+                    # If no choice made yet, offer options based on issue
+                    if issue == "Quality":
+                        return "I apologize for the poor quality/mismatch. Since you rated us low, I can offer an immediate **Refund** or **Replacement**. Which do you prefer?"
+                    elif issue == "Billing":
+                        return "I see you feel the price is unfair. I can initiate a **Full Refund** right now."
+                    elif issue == "Logistics":
+                        return "I'm sorry for the shipping trouble. I can process a refund for the shipping charges immediately."
+                
+                # 2. Mid Rating (2: Star 3) -> Help Desk / Email
+                if rating is not None and rating == 2:
+                    if "email" in text_clean or "help" in text_clean or "desk" in text_clean or "connect" in text_clean:
+                         return "I have registered your request. 📧 **Sending an escalation email to support@sportsphere.com...** [Sent Successfully]"
+
+                # 3. High Rating (3-4: Stars 4-5) -> Thanks
+                # If rating is high, we interpret the user's input as "what they liked", so we override any negative classification for keywords like "delivery".
+                if rating is not None and rating >= 3:
+                     # Dynamic acknowledgment
+                     if "delivery" in text_clean:
+                         return "Glad to hear the **Delivery** was up to the mark! 🚚💨 Thanks for the 5 stars!"
+                     if "quality" in text_clean or "product" in text_clean:
+                         return "Awesome! We pride ourselves on **Component Quality**. Enjoy your gear! 🏆"
+                     if "price" in text_clean:
+                         return "We try to offer the best value. Thanks for noticing! 💸"
+                     
+                     return "We are over the moon! 🌙 Thank you for your support. Keep rocking!"
+
+                # --- DEFAULT LOGIC ---
+                responses = {
+                    "negative": {
+                        "Logistics": [
+                            "I've prioritized this logicstics issue. Do you have your Order ID?",
+                            "Tracking shows a delay. I'm sorry. Can I have your Order Number to investigate?"
+                        ],
+                        "Quality": [
+                            "I apologize for the defect. Would you like a return?",
+                            "That sounds frustrating. We can swap that item for you."
+                        ],
+                        "Billing": [
+                            "I understand the billing concern. Connecting to Finance...",
+                            "Let me check why you were charged that amount."
+                        ],
+                        "Support": [
+                            "Here is our support email: support@sportsphere.com. I've also flagged this chat for a manager.",
+                            "A human agent will email you shortly."
+                        ],
+                        "General": [
+                            "I apologize for the bad experience.",
+                            "We will do better next time."
+                        ]
+                    },
+                    "neutral": {
+                        "Support": ["Our help desk is available 24/7 at support@sportsphere.com."],
+                        "General": ["How else can I help?", "Understood."]
+                    },
+                    "positive": {
+                        "General": ["Thanks!", "Awesome!"]
+                    }
+                }
+                
                 try:
                     category_responses = responses.get(sentiment, {}).get(issue, responses["neutral"]["General"])
                     return random.choice(category_responses)
                 except:
-                    return "I'm here to help. Could you provide more details?"
+                    return "I'm listening. Tell me more."
 
-            response_text = generate_response(sentiment, issue_category, prompt)
+            response_text = generate_response(sentiment, issue_category, prompt, user_rating)
             
             # --- Futuristic UI formatting ---
             sentiment_color = "#00cc96" if sentiment == "positive" else "#EF553B" if sentiment == "negative" else "#AB63FA"
             
-            # Formatted Debug Info (Styled Badge)
+            # Formatted Debug Info
             debug_info = f"""
             <div style='background-color: #1E1E1E; border-radius: 5px; padding: 8px; margin-top: 10px; font-size: 0.8em; border: 1px solid #333;'>
-                <span style='color: #888;'>🧠 AI Analysis:</span> 
+                <span style='color: #888;'>AI Brain:</span> 
                 <span style='color:{sentiment_color}; font-weight: bold; margin-left: 5px;'>{sentiment.upper()}</span>
                 <span style='color: #555; margin: 0 5px;'>|</span>
                 <span style='color: #ddd;'>{issue_category}</span>
+                <span style='color: #555; margin: 0 5px;'>|</span>
+                <span style='color: #aaa;'>Rating: {user_rating + 1 if user_rating is not None else "N/A"}★</span>
             </div>
             """
             
