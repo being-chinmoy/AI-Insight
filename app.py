@@ -335,9 +335,17 @@ elif mode == "Customer Chatbot":
                 if re.search(r'\b\d{5,}\b', text):
                      return "Thanks for providing the Order ID. I am pulling up your details now... ⏳"
 
+                # --- CONFIRMATION LOOP LOGIC (Context Memory) ---
+                if st.session_state.get('awaiting_return_confirm', False):
+                    if any(w in text_clean for w in ['yes', 'sure', 'yeah', 'okay', 'ok', 'please']):
+                         st.session_state['awaiting_return_confirm'] = False # Reset
+                         return "✅ **Return Initiated.** A courier will pick up the item within 48 hours. Thank you!"
+                    elif any(w in text_clean for w in ['no', 'cancel', 'nope']):
+                         st.session_state['awaiting_return_confirm'] = False # Reset
+                         return "Okay, I kept the order as is. How else can I help?"
+
                 # --- RATING BASED LOGIC FLOW ---
                 
-                # 1. Low Rating (0-1: Stars 1-2) -> Auto Refund/Replacement
                 # 1. Low Rating (0-1: Stars 1-2) -> Auto Refund/Replacement
                 if rating is not None and rating <= 1:
                     # CHECK FOR USER CHOICE FIRST (Resolution)
@@ -401,8 +409,8 @@ elif mode == "Customer Chatbot":
                             "That sounds frustrating. We can swap that item for you."
                         ],
                         "Billing": [
-                            "I understand the billing concern. Connecting to Finance...",
-                            "Let me check why you were charged that amount."
+                            "I see you are waiting for a refund. Let me check the status... ⏳ It looks like it was processed yesterday. Please check with your bank.",
+                            "If you already returned the item, the refund usually takes 3-5 days. I've bumped this ticket for priority review."
                         ],
                         "Support": [
                             "Here is our support email: support@sportsphere.com. I've also flagged this chat for a manager.",
@@ -430,6 +438,11 @@ elif mode == "Customer Chatbot":
 
             # Generate Response (MOVED HERE to fix usage-before-definition error)
             response_text = generate_response(sentiment, effective_issue, prompt, user_rating)
+            
+            # --- CONTEXT TRIGGER ---
+            # If the bot ASKED a question ("Would you like...?"), set the flag so the NEXT turn knows to look for "Yes".
+            if "Would you like a return?" in response_text:
+                st.session_state['awaiting_return_confirm'] = True
             
             # --- Futuristic UI formatting ---
             sentiment_color = "#00cc96" if sentiment == "positive" else "#EF553B" if sentiment == "negative" else "#AB63FA"
